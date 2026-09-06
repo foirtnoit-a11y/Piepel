@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "piepel-build-script",
+  "author": "Piepel",
+  "description": {
+    "": "Build a parametric model, check it for machinability, render it, export STEP for OneCNC, and write the setup contract the G-code verifier uses."
+  },
+  "version": "1.0.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}
