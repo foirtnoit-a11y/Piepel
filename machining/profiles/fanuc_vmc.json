@@ -1,0 +1,18 @@
+{
+  "name": "Generic Fanuc 0i-MF VMC",
+  "control": "fanuc",
+  "envelope": {
+    "x_min": -800.0, "x_max": 0.0,
+    "y_min": -450.0, "y_max": 0.0,
+    "z_min": -500.0, "z_max": 0.0
+  },
+  "max_rpm": 12000.0,
+  "max_feed_mm_min": 20000.0,
+  "rapid_mm_min": 36000.0,
+  "tool_capacity": 24,
+  "tool_change_seconds": 6.0,
+  "has_rigid_tapping": true,
+  "has_high_speed_lookahead": true,
+  "unsupported_g": [],
+  "unsupported_m": [21, 22, 23]
+}

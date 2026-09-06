@@ -1,0 +1,14 @@
+{
+  "machine": "haas_vf2",
+  "expected_wcs": ["G54"],
+  "stock": {
+    "x_min": -50.0, "x_max": 50.0,
+    "y_min": -40.0, "y_max": 40.0,
+    "z_bottom": -25.0, "z_top": 0.0,
+    "clearance": 5.0
+  },
+  "tools": [
+    {"number": 1, "diameter": 12.0, "flutes": 4, "description": "12mm 4FL carbide endmill"},
+    {"number": 2, "diameter": 6.8, "flutes": 2, "description": "6.8mm stub drill"}
+  ]
+}
