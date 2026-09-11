@@ -42,11 +42,13 @@ the spindle.
 |---|---|
 | `machining/gcode/` | Parser, backplotter and safety linter for Fanuc/Haas NC |
 | `machining/feeds.py` | Feeds, speeds, chip thinning, power and deflection |
+| `machining/chamfer.py` | Compensated 2D chamfer paths for slots in round shafts |
+| `machining/dxf.py` | Minimal DXF R12 writer, for geometry OneCNC can import |
 | `machining/profiles/` | Machine definitions (Haas VF-2, generic Fanuc VMC) |
 | `fusion/fusionkit/` | Parameters, renders, measurement, export, CAM contract |
 | `fusion/models/` | Parametric part definitions — the script *is* the model |
 | `fusion/scripts/PiepelBuild/` | The entry point you run from Fusion |
-| `tests/` | 56 tests, stdlib `unittest` only |
+| `tests/` | 92 tests, stdlib `unittest` only |
 
 ## Using it
 
@@ -100,6 +102,19 @@ number that explains most chatter.
 
 These are **starting points** from published general-purpose data, not
 guarantees. Run the first pass at 70–80%, listen to it, then push it up.
+
+### Chamfer a slot in a shaft
+
+Only 2D toolpaths available, but the slot edge does not lie in a plane. The
+tool computes the compensation and emits DXF for OneCNC:
+
+```bash
+python3 chamfer.py -D 50 -w 12 -l 40 -c 0.4 --dxf slot.dxf
+```
+
+It also prints the four numbers for the by-hand construction, and how much that
+shortcut over-cuts as a fraction of your chamfer. See
+[docs/shaft-slot-chamfer.md](docs/shaft-slot-chamfer.md) for the derivation.
 
 ### Model in Fusion
 
