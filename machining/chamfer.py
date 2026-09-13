@@ -91,8 +91,6 @@ class ChamferTool:
     diameter: float = 6.0
     tip_diameter: float = 0.0     # physical flat at the point, if any
     flutes: int = 4
-    number: int = 1
-    length_offset: int | None = None
 
     @property
     def half_angle(self) -> float:
@@ -157,6 +155,22 @@ class ChamferPath:
                     out.append(p)
         return out
 
+    def continuity(self) -> tuple[float, float]:
+        """Worst gap where one entity hands over to the next, and the closing gap.
+
+        This is what decides whether the DXF chains into a single contour. A CAM
+        package that cannot match the next entity's start point to the previous
+        one's end either breaks the chain or quietly leaves a gap in the
+        chamfer, so both numbers want to be zero -- not merely small.
+        """
+        if len(self.segments) < 2 or not self.closed:
+            return (0.0, 0.0)  # open slots are separate chains by design
+        worst = max(math.dist(self.segments[i][1][-1], self.segments[i + 1][1][0])
+                    for i in range(len(self.segments) - 1))
+        closing = (math.dist(self.segments[-1][1][-1], self.segments[0][1][0])
+                   if self.closed else 0.0)
+        return (worst, closing)
+
     def path_length(self) -> float:
         pts = self.points()
         if self.closed and pts:
@@ -189,6 +203,23 @@ def _sample_arc(shaft, slot, tool, cx, cy, start_deg, end_deg, tol):
         o = _offset(shaft, tool, x)
         pts.append((x + o * nx, y + o * ny))
     return pts, chordal_error(hw, abs(end_deg - start_deg), n)
+
+
+def _corner_arc(cx, cy, radius, start_deg, end_deg, tol):
+    """Round join at a sharp slot corner.
+
+    At a square corner the edge turns 90 degrees in plan, so the offset path
+    has to sweep round it at constant distance -- the offset magnitude is the
+    same on both sides (drop(W/2)*tan(a)), so a quarter circle centred on the
+    true corner joins them exactly. Without this the flank offset (in X) and
+    the end offset (in Y) never meet and the contour will not chain.
+    """
+    n = max(arc_segments(radius, abs(end_deg - start_deg), tol), 2)
+    pts = []
+    for i in range(n + 1):
+        a = math.radians(start_deg + (end_deg - start_deg) * i / n)
+        pts.append((cx + radius * math.cos(a), cy + radius * math.sin(a)))
+    return pts
 
 
 def _sample_end_line(shaft, slot, tool, y, x_from, x_to, ny, tol):
@@ -237,12 +268,19 @@ def build(shaft: Shaft, slot: Slot, tool: ChamferTool, leg: float,
         chord_err = max(chord_err, e)
     else:  # square
         hl = slot.length / 2.0
-        segments.append(("line", [(hw + off_flank, -hl), (hw + off_flank, hl)]))
+        o = off_flank
+        segments.append(("line", [(hw + o, -hl), (hw + o, hl)]))
+        segments.append(("poly", _corner_arc(hw, hl, o, 0.0, 90.0, chordal_tol)))
         segments.append(("poly", _sample_end_line(shaft, slot, tool, hl, hw, -hw, 1.0,
                                                   chordal_tol)))
-        segments.append(("line", [(-hw - off_flank, hl), (-hw - off_flank, -hl)]))
+        segments.append(("poly", _corner_arc(-hw, hl, o, 90.0, 180.0, chordal_tol)))
+        segments.append(("line", [(-hw - o, hl), (-hw - o, -hl)]))
+        segments.append(("poly", _corner_arc(-hw, -hl, o, 180.0, 270.0, chordal_tol)))
         segments.append(("poly", _sample_end_line(shaft, slot, tool, -hl, -hw, hw, -1.0,
                                                   chordal_tol)))
+        segments.append(("poly", _corner_arc(hw, -hl, o, 270.0, 360.0, chordal_tol)))
+        chord_err = max(chord_err, chordal_error(o, 90.0,
+                                                 max(arc_segments(o, 90.0, chordal_tol), 2)))
 
     z_apex = -leg / tool.tan_half  # virtual apex sits one vertical leg down
     simple = simple_construction(shaft, slot, tool, leg)
@@ -383,46 +421,6 @@ def to_dxf(path: ChamferPath, include_reference: bool = True) -> Dxf:
     return d
 
 
-def to_gcode(path: ChamferPath, rpm: float = 6000.0, feed: float = 600.0,
-             clearance: float = 5.0, program: int = 9100,
-             coolant: bool = True) -> str:
-    """A standalone Fanuc/Haas program for the chamfer pass.
-
-    Emitted so it can be run through the verifier in this repo:
-        python3 -m gcode.cli chamfer.nc -s setup.json
-    The lead-in plunges at the centre of the slot, which is open air.
-    """
-    tool = path.tool
-    h = tool.length_offset or tool.number
-    z = path.z_flat if tool.tip_diameter > 0 else path.z_apex
-    L = [
-        "%",
-        f"O{program} (CHAMFER SLOT {path.slot.width:g} IN SHAFT "
-        f"{path.shaft.diameter:g})",
-        f"({tool.included_angle:g} DEG CHAMFER TOOL, {path.leg:g} MM LEG)",
-        f"(PATH COMPENSATED FOR {path.drop_max:.4f} MM EDGE DROP)",
-        "G21 G17 G40 G49 G80 G90",
-        "G53 G0 Z0.",
-        f"T{tool.number} M6",
-        f"G54 G0 X0. Y0. S{rpm:.0f} M3",
-        f"G43 H{h} Z{clearance:.3f}" + (" M8" if coolant else ""),
-    ]
-    groups = [path.points()] if path.closed else [pts for _, pts in path.segments]
-    for pts in groups:
-        if not pts:
-            continue
-        L.append("G0 X0. Y0.")                       # over open slot, safe to drop
-        L.append(f"G1 Z{z:.4f} F{feed / 3:.0f}")     # gentle plunge into air
-        L.append(f"G1 X{pts[0][0]:.4f} Y{pts[0][1]:.4f} F{feed:.0f}")
-        for x, y in pts[1:]:
-            L.append(f"G1 X{x:.4f} Y{y:.4f}")
-        if path.closed:
-            L.append(f"G1 X{pts[0][0]:.4f} Y{pts[0][1]:.4f}")
-        L.append(f"G0 Z{clearance:.3f}")
-    L += ["M9 M5" if coolant else "M5", "G53 G0 Z0.", "G90 G40", "M30", "%"]
-    return "\n".join(L) + "\n"
-
-
 def report(path: ChamferPath) -> str:
     s, sl, t, simp = path.shaft, path.slot, path.tool, path.simple
     ends = {"round": f"round ends (R{sl.half_width:g})", "square": "square ends",
@@ -469,6 +467,10 @@ def report(path: ChamferPath) -> str:
         f"chordal error < {path.chord_error * 1000:.1f} um",
         "  offset varies as drop(x)*tan(a) instead of ramping linearly",
     ]
+    worst_gap, closing = path.continuity()
+    L.append(f"  entity handover gap {worst_gap:.6f} mm"
+             + (f", loop closes to {closing:.6f} mm" if path.closed
+                else " (two open passes, chain each separately)"))
     if path.warnings:
         L.append("")
         L.append("CHECK")
@@ -498,17 +500,13 @@ def _main(argv=None) -> int:
     ap.add_argument("--slot-depth", type=float, help="only used for sanity checks")
     ap.add_argument("--tol", type=float, default=0.005, help="chordal tolerance, mm")
     ap.add_argument("--dxf", help="write the path to this DXF file")
-    ap.add_argument("--gcode", help="write a standalone NC program to this file")
-    ap.add_argument("--rpm", type=float, default=6000.0)
-    ap.add_argument("--feed", type=float, default=600.0)
-    ap.add_argument("--tool-number", type=int, default=1)
     a = ap.parse_args(argv)
 
     path = build(
         Shaft(a.shaft),
         Slot(a.slot_width, a.slot_length, a.ends, a.slot_depth),
         ChamferTool(included_angle=a.angle, diameter=a.tool_diameter,
-                    tip_diameter=a.tip_diameter, number=a.tool_number),
+                    tip_diameter=a.tip_diameter),
         leg=a.chamfer, chordal_tol=a.tol,
     )
     print()
@@ -518,10 +516,6 @@ def _main(argv=None) -> int:
         d.write(a.dxf)
         print(f"\n  DXF   {a.dxf}  ({d.entity_count} entities; path on layer "
               f"CHAMFER_PATH)")
-    if a.gcode:
-        with open(a.gcode, "w", encoding="ascii", newline="\r\n") as fh:
-            fh.write(to_gcode(path, rpm=a.rpm, feed=a.feed))
-        print(f"  NC    {a.gcode}")
     print()
     return 0
 

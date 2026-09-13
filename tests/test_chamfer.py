@@ -7,10 +7,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "machining"))
 
-from chamfer import (ChamferTool, Shaft, Slot, build, report, simple_construction,  # noqa: E402
-                     to_dxf, to_gcode)
+from chamfer import (ChamferTool, Shaft, Slot, build, report,  # noqa: E402
+                     simple_construction, to_dxf)
 from dxf import Dxf, arc_segments, chordal_error  # noqa: E402
-from gcode import Machine, Setup, Stock, Tool, backplot, lint, parse  # noqa: E402
 
 # The case this was written for: 50 mm shaft, 12 mm slot, 40 mm long, 0.4 chamfer.
 CASE = dict(shaft=50.0, width=12.0, length=40.0, leg=0.4)
@@ -224,36 +223,69 @@ class TestReportAndDxf(unittest.TestCase):
             Dxf("furlongs")
 
 
-class TestGeneratedGcode(unittest.TestCase):
-    """The generated program must survive this repo's own verifier."""
+class TestChaining(unittest.TestCase):
+    """The DXF has to chain into one contour, or OneCNC leaves gaps in the chamfer."""
 
-    SETUP = Setup(
-        machine=Machine.load("haas_vf2"),
-        stock=Stock(x_min=-25, x_max=25, y_min=-60, y_max=60, z_bottom=-50, z_top=0),
-        tools={1: Tool(1, 6.0, "90deg chamfer mill", flutes=4)},
-    )
+    def test_closed_paths_have_no_handover_gaps(self):
+        for ends in ("round", "square"):
+            with self.subTest(ends=ends):
+                gap, closing = make(ends=ends).continuity()
+                self.assertAlmostEqual(gap, 0.0, places=9)
+                self.assertAlmostEqual(closing, 0.0, places=9)
 
-    def _rules(self, nc):
-        blocks = parse(nc)
-        return {d.rule for d in lint(blocks, backplot(blocks, self.SETUP), self.SETUP)}
+    def test_square_corners_are_joined_by_a_round_sweep(self):
+        """The flank offsets in X and the end in Y; without a join they never meet."""
+        p = make(ends="square")
+        hw, hl, o = 6.0, 20.0, p.offset_at_flank
+        pts = [(round(x, 6), round(y, 6)) for x, y in p.points()]
+        # both ends of the quarter turn at the (+x, +y) corner are on the path
+        self.assertIn((round(hw + o, 6), round(hl, 6)), pts)
+        self.assertIn((round(hw, 6), round(hl + o, 6)), pts)
+        # and the sweep between them stays at the offset distance from the corner
+        mids = [(x, y) for x, y in p.points()
+                if hw < x < hw + o and hl < y < hl + o]
+        self.assertTrue(mids)
+        for x, y in mids:
+            self.assertAlmostEqual(math.hypot(x - hw, y - hl), o, places=6)
 
-    def test_round_slot_program_lints_clean(self):
-        self.assertEqual(self._rules(to_gcode(make())), set())
+    def test_open_slot_reports_no_handover(self):
+        gap, closing = make(ends="open", length=60.0).continuity()
+        self.assertEqual((gap, closing), (0.0, 0.0))
 
-    def test_open_slot_program_lints_clean(self):
-        self.assertEqual(self._rules(to_gcode(make(ends="open", length=60.0))), set())
-
-    def test_flat_tipped_tool_programs_the_corrected_z(self):
-        nc = to_gcode(make(tip_diameter=0.2))
-        self.assertIn("Z-0.3000", nc)
-        self.assertNotIn("Z-0.4000", nc)
-
-    def test_program_stays_within_the_slot_footprint(self):
+    def test_dxf_entities_are_endpoint_continuous(self):
+        """Walk the emitted LINE entities and confirm each starts where the last ended."""
         p = make()
-        res = backplot(parse(to_gcode(p)), self.SETUP)
-        lo, hi = res.bounds()
-        self.assertLessEqual(hi[0], 6.0 + p.offset_at_flank + 1e-4)
-        self.assertGreaterEqual(lo[2], p.z_apex - 1e-4)
+        d = to_dxf(p, include_reference=False)
+        lines = d.to_string().split("\n")
+        coords, i = [], 0
+        while i < len(lines):
+            if lines[i] == "LINE":
+                vals = {}
+                j = i + 1
+                while j + 1 < len(lines) and lines[j] != "0":
+                    vals[lines[j]] = lines[j + 1]
+                    j += 2
+                coords.append(((float(vals["10"]), float(vals["20"])),
+                               (float(vals["11"]), float(vals["21"]))))
+                i = j
+            else:
+                i += 1
+        self.assertGreater(len(coords), 10)
+        for (_, end), (start, _) in zip(coords, coords[1:]):
+            self.assertAlmostEqual(math.dist(end, start), 0.0, places=6)
+        self.assertAlmostEqual(math.dist(coords[-1][1], coords[0][0]), 0.0, places=6)
+
+
+class TestPathExtents(unittest.TestCase):
+    def test_path_stays_within_the_compensated_footprint(self):
+        p = make()
+        xs = [abs(x) for x, _ in p.points()]
+        ys = [abs(y) for _, y in p.points()]
+        self.assertAlmostEqual(max(xs), 6.0 + p.offset_at_flank, places=9)
+        self.assertAlmostEqual(max(ys), 20.0, places=9)
+
+    def test_report_states_the_chaining_numbers(self):
+        self.assertIn("handover gap 0.000000", report(make()))
 
 
 if __name__ == "__main__":

@@ -71,8 +71,7 @@ just in millimetres.
 
 ```bash
 cd machining
-python3 chamfer.py -D 50 -w 12 -l 40 -c 0.4 \
-    --dxf chamfer_50x12.dxf --gcode chamfer_50x12.nc
+python3 chamfer.py -D 50 -w 12 -l 40 -c 0.4 --dxf chamfer_50x12.dxf
 ```
 
 - `-D` shaft diameter, `-w` slot width, `-l` slot length, `-c` radial chamfer leg
@@ -97,12 +96,33 @@ Three layers:
 R12 ASCII with LINE/ARC/CIRCLE only, which is the most conservative thing any
 CAD package will read.
 
+### Chaining
+
+The path is emitted endpoint-continuous, so it chains as a single closed
+contour. The report states both numbers that decide this:
+
+```
+entity handover gap 0.000000 mm, loop closes to 0.000000 mm
+```
+
+They should be exactly zero, not merely small. If a CAM package cannot match
+one entity's end to the next one's start it either breaks the chain or leaves a
+gap in the chamfer, and a gap is the kind of thing you find on the part rather
+than on the screen.
+
+Square-ended slots need care here, because the flank offsets in X while the end
+offsets in Y — at the sharp corner the two offsets never meet. The generator
+inserts a quarter-circle round join of radius `drop(W/2)·tan(a)` centred on the
+true corner, which is both what a constant-offset sweep does and what keeps the
+chamfer width constant round the corner. Open-ended slots are two independent
+chains; chain each separately.
+
 ### End styles
 
 | Style | Geometry | Compensation |
 |---|---|---|
 | `round` | Cut with a W-diameter tool, semicircular ends | Exact on flanks, varies round the ends |
-| `square` | Straight ends across the shaft | The straight end becomes a curve; the hand shortcut is much worse here (error reaches the full `drop_max·tan(a)`, not a quarter of it) |
+| `square` | Straight ends across the shaft | The straight end becomes a curve, and the sharp corners get round joins so the contour still chains. The hand shortcut is much worse here — error reaches the full `drop_max·tan(a)`, not a quarter of it |
 | `open` | Slot runs off the end of the shaft | Two straight passes at fixed offset — exact, nothing to approximate |
 
 ## Limits
@@ -115,5 +135,6 @@ CAD package will read.
   model says.
 - **Rigid setup assumed.** A 0.185 mm geometric error is meaningless next to a
   shaft deflecting in a vee-block, so clamp close to the cut.
-- The generated NC program is a convenience for checking the geometry against
-  `gcode.cli`. If OneCNC is posting the job, use the DXF and let it post.
+- **DXF only, by design.** OneCNC posts the job, so this emits geometry and
+  stops there. Verifying what OneCNC posted is a separate step —
+  `python3 -m gcode.cli <posted>.nc -s setup.json`.
