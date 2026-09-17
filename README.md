@@ -43,12 +43,13 @@ the spindle.
 | `machining/gcode/` | Parser, backplotter and safety linter for Fanuc/Haas NC |
 | `machining/feeds.py` | Feeds, speeds, chip thinning, power and deflection |
 | `machining/chamfer.py` | Compensated 2D chamfer paths for slots in round shafts |
+| `machining/cabinet_slot.py` | Tapered finger notch in a cabinet front, straight to StepCraft NC |
 | `machining/dxf.py` | Minimal DXF R12 writer, for geometry OneCNC can import |
-| `machining/profiles/` | Machine definitions (Haas VF-2, generic Fanuc VMC) |
+| `machining/profiles/` | Machine definitions (Haas VF-2, generic Fanuc VMC, StepCraft M.1000) |
 | `fusion/fusionkit/` | Parameters, renders, measurement, export, CAM contract |
 | `fusion/models/` | Parametric part definitions — the script *is* the model |
 | `fusion/scripts/PiepelBuild/` | The entry point you run from Fusion |
-| `tests/` | 92 tests, stdlib `unittest` only |
+| `tests/` | 125 tests, stdlib `unittest` only |
 
 ## Using it
 
@@ -115,6 +116,27 @@ python3 chamfer.py -D 50 -w 12 -l 40 -c 0.4 --dxf slot.dxf
 It also prints the four numbers for the by-hand construction, and how much that
 shortcut over-cuts as a fraction of your chamfer. See
 [docs/shaft-slot-chamfer.md](docs/shaft-slot-chamfer.md) for the derivation.
+
+### Cut a finger notch in a cabinet front
+
+The one leg of this that does not go through OneCNC. A StepCraft running
+WinPC-NC is a different machine from the VMC the rest of the repo posts for, so
+the notch is generated straight to NC and checked by the same verifier:
+
+```bash
+python3 cabinet_slot.py --thickness 12 --cutter-diameter 8 \
+    -o notch.nc --setup notch_setup.json
+python3 -m gcode.cli notch.nc -s notch_setup.json
+```
+
+The path is emitted on the compensated centreline — the cutter radius is
+computed into the coordinates rather than handed to `G41`/`G42`, so the file
+says exactly where the tool goes and the backplot can check it. Pass the
+diameter you *measured*, not the one on the shank.
+
+See [docs/cabinet-front-notch.md](docs/cabinet-front-notch.md) for the geometry,
+including why 71.65 falls out of 65, 20 and R6 rather than being a free
+dimension.
 
 ### Model in Fusion
 

@@ -49,6 +49,11 @@ MATERIALS: dict[str, Material] = {m.key: m for m in [
              "rigidity matters more than speed here"),
     Material("acetal", "Acetal / Delrin", 500, (300, 900), 0.020, 0.25,
              "melts if it rubs; single or two flute, sharp and polished"),
+    Material("mdf", "MDF / spaanplaat", 450, (200, 900), 0.020, 0.55,
+             "the urea-formaldehyde dust is abrasive and a lung hazard - extract "
+             "it and wear a mask. Chip load matters far more than speed here: a "
+             "starved feed rubs, burns the wall and glazes the edge. A router "
+             "will nearly always be feed-limited rather than power-limited"),
 ]}
 
 

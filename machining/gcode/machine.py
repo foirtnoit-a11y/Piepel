@@ -41,9 +41,16 @@ class Machine:
     tool_change_seconds: float = 5.0
     has_rigid_tapping: bool = True
     has_high_speed_lookahead: bool = True
+    # A hobby router has one collet, no tool table and no canned cycles. Rules
+    # that demand G43/G49/G80 are false positives there, so they are gated on
+    # these rather than on the control name.
+    has_tool_length_offsets: bool = True
+    has_canned_cycles: bool = True
     # Codes this control does not accept; flagged as hard errors.
     unsupported_g: tuple[float, ...] = ()
     unsupported_m: tuple[float, ...] = ()
+    # Free text for whoever reads the profile; never parsed.
+    notes: str = ""
 
     @classmethod
     def load(cls, name_or_path: str) -> "Machine":

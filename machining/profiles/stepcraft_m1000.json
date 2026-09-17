@@ -1,0 +1,21 @@
+{
+  "name": "StepCraft M.1000 (WinPC-NC)",
+  "control": "winpcnc",
+  "envelope": {
+    "x_min": 0.0, "x_max": 1000.0,
+    "y_min": 0.0, "y_max": 600.0,
+    "z_min": -140.0, "z_max": 0.0
+  },
+  "max_rpm": 25000.0,
+  "max_feed_mm_min": 3000.0,
+  "rapid_mm_min": 3000.0,
+  "tool_capacity": 1,
+  "tool_change_seconds": 60.0,
+  "has_rigid_tapping": false,
+  "has_high_speed_lookahead": false,
+  "has_tool_length_offsets": false,
+  "has_canned_cycles": false,
+  "unsupported_g": [43, 44, 49, 73, 74, 76, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89],
+  "unsupported_m": [6, 7, 8, 9, 19],
+  "notes": "CHECK THESE AGAINST YOUR MACHINE. Travel is the catalogue working area and Z depends on which gantry/spindle mount you have. max_feed and rapid are what WinPC-NC is configured to, not what the catalogue claims -- read them off Parameters > Speeds. max_rpm assumes an AMB/Kress-class router (5000-25000); an HF spindle on a VFD differs. Tool changes are by hand, hence the one pocket and the 60 s. S is only obeyed if WinPC-NC actually controls the spindle; with a hand-dialled AMB, set the dial to the S value in the header."
+}

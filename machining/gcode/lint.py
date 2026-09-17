@@ -120,6 +120,8 @@ def rule_cut_below_stock(blocks, res: Result, setup: Setup) -> list[Diagnostic]:
 def rule_tool_length_comp(blocks, res: Result, setup: Setup) -> list[Diagnostic]:
     """A Z move after a tool change with no G43 active runs on the last tool's offset."""
     out = []
+    if not setup.machine.has_tool_length_offsets:
+        return out  # one collet, Z zeroed on the job: there is no offset to activate
     flagged: set[int | None] = set()
     for m in res.moves:
         if m.machine_coords or abs(m.end[2] - m.start[2]) < 1e-9:
@@ -137,6 +139,8 @@ def rule_tool_length_comp(blocks, res: Result, setup: Setup) -> list[Diagnostic]
 
 def rule_h_matches_t(blocks, res: Result, setup: Setup) -> list[Diagnostic]:
     out = []
+    if not setup.machine.has_tool_length_offsets:
+        return out
     seen = set()
     for m in res.moves:
         if m.tool is None or m.h_offset is None or m.tool in seen:
@@ -277,16 +281,26 @@ def rule_modal_hygiene(blocks: list[Block], res: Result, setup: Setup) -> list[D
 
 def rule_safe_start(blocks: list[Block], res: Result, setup: Setup) -> list[Diagnostic]:
     """Every hand-checked program opens with a known-state safety line."""
-    head = [b for b in blocks[:12] if not b.is_empty]
+    # Drop the comments *before* taking the window, or a long banner header
+    # pushes the safe-start line out of view and the rule cries wolf.
+    head = [b for b in blocks if not b.is_empty][:12]
     gs = {g for b in head for g in b.g_codes()}
-    missing = [f"G{c:g}" for c in (17.0, 40.0, 49.0, 80.0, 90.0) if c not in gs]
+    want = [17.0, 40.0, 90.0]
+    # Only ask for the cancels the control actually has. Demanding G49 of a
+    # machine with no tool table sends the operator looking for a bug.
+    if setup.machine.has_tool_length_offsets:
+        want.append(49.0)
+    if setup.machine.has_canned_cycles:
+        want.append(80.0)
+    missing = [f"G{c:g}" for c in sorted(want) if c not in gs]
     if missing:
         line = head[0].line_no if head else 1
         return [Diagnostic(
             line, "NO_SAFE_START", "warn",
             f"no safe-start line; missing {', '.join(missing)} in the program header",
-            "open with `G17 G20/G21 G40 G49 G80 G90` so the program does not inherit "
-            "modal state from whatever ran last")]
+            "open with `G17 G20/G21 G40 %sG90` so the program does not inherit "
+            "modal state from whatever ran last"
+            % ("G49 G80 " if setup.machine.has_tool_length_offsets else ""))]
     return []
 
 
