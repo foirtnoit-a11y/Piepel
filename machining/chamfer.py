@@ -603,48 +603,104 @@ def report(path: ChamferPath) -> str:
     return "\n".join(L)
 
 
+def summary(path: ChamferPath, dxf_name: str = "") -> str:
+    """The short form. Three facts and what to do next."""
+    sl, sh = path.slot, path.shaft
+    size = (f"{sl.width:g} x {sl.length:g} mm slot" if sl.end_style != "open"
+            else f"{sl.width:g} mm open slot")
+    L = [
+        f"{sh.diameter:g} mm rod, {size}",
+        "",
+        f"  edge drop     {path.drop_max:.4f} mm   "
+        f"(how far the long sides sit below the top)",
+    ]
+    if sl.end_style == "round":
+        L.append(f"  by hand       {sl.length:g} x {path.simple['width']:.4f} mm, "
+                 f"corner R{sl.half_width:g}")
+    if dxf_name:
+        L.append(f"  wrote         {dxf_name}")
+    L += [
+        "",
+        "In OneCNC: import, hide the SLOT_NOMINAL layer, chain CHAMFER_PATH,",
+        "then set your chamfer size as usual. Part Z0 on top of the rod.",
+    ]
+    return "\n".join(L)
+
+
+def _ask(prompt: str, required: bool = True) -> float:
+    while True:
+        raw = input(prompt).strip().replace(",", ".")
+        if not raw and not required:
+            return 0.0
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+        print("  needs a number in mm" + ("" if required else ", or blank"))
+
+
 def _main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(
         prog="chamfer",
-        description="Generate a compensated 2D chamfer path for a lengthwise slot "
-                    "in a round shaft.")
-    ap.add_argument("-D", "--shaft", type=float, required=True, help="shaft diameter, mm")
-    ap.add_argument("-w", "--slot-width", type=float, required=True, help="slot width, mm")
-    ap.add_argument("-l", "--slot-length", type=float, default=0.0,
-                    help="slot length, mm (omit for an open-ended slot)")
-    ap.add_argument("-c", "--chamfer", type=float, default=0.4,
-                    help="radial chamfer leg, mm (default 0.4)")
+        description="Rod diameter, slot width, slot length -> a DXF to import into OneCNC.",
+        epilog="Run with no arguments to be asked for the numbers.")
+    ap.add_argument("diameter", type=float, nargs="?", help="rod diameter, mm")
+    ap.add_argument("width", type=float, nargs="?", help="slot width, mm")
+    ap.add_argument("length", type=float, nargs="?",
+                    help="slot length, mm (omit if the slot runs off the end)")
+    ap.add_argument("-o", "--out", help="output file (default: named from the numbers)")
     ap.add_argument("-a", "--angle", type=float, default=90.0,
-                    help="tool included angle, deg (default 90)")
-    ap.add_argument("-e", "--ends", choices=END_STYLES, default="round")
-    ap.add_argument("--tip-diameter", type=float, default=0.0,
-                    help="flat at the tool point, mm")
-    ap.add_argument("--tool-diameter", type=float, default=6.0)
-    ap.add_argument("--slot-depth", type=float, help="only used for sanity checks")
-    ap.add_argument("--tol", type=float, default=0.005, help="chordal tolerance, mm")
-    ap.add_argument("--dxf", help="write the path to this DXF file")
-    ap.add_argument("--measure", action="store_true",
-                    help="print a table of stations to check on the finished part")
+                    help="chamfer tool included angle, deg (default 90)")
+    ap.add_argument("-e", "--ends", choices=END_STYLES, default=None,
+                    help="slot end shape (default: round, or open with no length)")
+    ap.add_argument("--tol", type=float, default=0.005, help="curve tolerance, mm")
+    ap.add_argument("--explain", action="store_true",
+                    help="show the full geometry, the error in the by-hand shape, "
+                         "and where to measure the finished part")
+    ap.add_argument("-c", "--chamfer", type=float, default=0.2,
+                    help="chamfer size, mm -- only used by --explain. It does not "
+                         "change the path: the CAM applies it and it cancels out")
     a = ap.parse_args(argv)
 
-    path = build(
-        Shaft(a.shaft),
-        Slot(a.slot_width, a.slot_length, a.ends, a.slot_depth),
-        ChamferTool(included_angle=a.angle, diameter=a.tool_diameter,
-                    tip_diameter=a.tip_diameter),
-        leg=a.chamfer, chordal_tol=a.tol,
-    )
+    if a.diameter is None:
+        print("\nChamfer path for a slot in a round rod.\n")
+        a.diameter = _ask("  rod diameter (mm):              ")
+        a.width = _ask("  slot width (mm):                ")
+        a.length = _ask("  slot length (mm, blank = open): ", required=False)
+    elif a.width is None:
+        ap.error("give both a diameter and a slot width (or no arguments to be asked)")
+
+    length = a.length or 0.0
+    ends = a.ends or ("round" if length else "open")
+    try:
+        path = build(Shaft(a.diameter), Slot(a.width, length, ends),
+                     ChamferTool(included_angle=a.angle), leg=a.chamfer, chordal_tol=a.tol)
+    except ValueError as exc:
+        print(f"\n  {exc}\n")
+        return 2
+
+    name = a.out or (f"chamfer_D{a.diameter:g}_W{a.width:g}"
+                     + (f"_L{length:g}" if length else "_open") + ".dxf")
+    to_dxf(path).write(name)
+
     print()
-    print(report(path))
-    if a.measure:
+    if a.explain:
+        print(report(path))
         print()
-        print(measurement_sheet(path))
-    if a.dxf:
-        d = to_dxf(path)
-        d.write(a.dxf)
-        print(f"\n  DXF   {a.dxf}  ({d.entity_count} entities; path on layer "
-              f"CHAMFER_PATH)")
+        if ends != "open":
+            print(measurement_sheet(path))
+            print()
+        print(f"  wrote {name}")
+    else:
+        print(summary(path, name))
+        # Only things the operator can act on. The by-hand error and the
+        # drop-vs-chamfer ratio are near-universal and live under --explain.
+        for w in path.warnings:
+            if "gouge" in w or "2D chamfer will vary" in w or "runs out of flank" in w:
+                print(f"\n  ! {w}")
     print()
     return 0
 

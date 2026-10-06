@@ -89,17 +89,23 @@ shaft**, because that is where the compensation is referenced from.
 
 ```bash
 cd machining
-python3 chamfer.py -D 50 -w 12 -l 40 -c 0.4 --dxf chamfer_50x12.dxf
+python3 chamfer.py 50 12 40          # rod dia, slot width, slot length
+python3 chamfer.py                   # or be asked for the three numbers
+python3 chamfer.py 25 8              # no length = slot runs off the end
 ```
 
-- `-D` shaft diameter, `-w` slot width, `-l` slot length, `-c` radial chamfer leg
-- `-a` tool included angle (default 90)
-- `-e round|square|open` — how the slot ends
-- `--tip-diameter` if the tool has a flat at the point
-- `--tol` chordal tolerance for the polyline (default 5 µm)
+The DXF is written automatically, named from the numbers. That is the whole
+job; everything below is optional.
 
-The report gives you both routes: the four numbers for the by-hand
-construction, and the exact path as DXF.
+- `-o` name the output file
+- `-a` tool included angle (default 90, i.e. a 45° flank)
+- `-e round|square|open` — slot end shape, inferred if omitted
+- `--tol` curve tolerance (default 5 µm)
+- `--explain` full geometry, by-hand error, and measurement stations
+
+**The chamfer size is not an input.** OneCNC applies it, and it cancels out of
+the compensation — see below. `-c` exists only to scale the numbers `--explain`
+reports.
 
 ### The DXF
 

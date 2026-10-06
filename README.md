@@ -103,18 +103,33 @@ number that explains most chatter.
 These are **starting points** from published general-purpose data, not
 guarantees. Run the first pass at 70–80%, listen to it, then push it up.
 
-### Chamfer a slot in a shaft
+### Chamfer a slot in a rod
 
-Only 2D toolpaths available, but the slot edge does not lie in a plane. The
-tool computes the compensation and emits DXF for OneCNC:
+Rod diameter, slot width, slot length — out comes a DXF to import into OneCNC.
 
 ```bash
-python3 chamfer.py -D 50 -w 12 -l 40 -c 0.4 --dxf slot.dxf
+python3 chamfer.py 50 12 40
 ```
 
-It also prints the four numbers for the by-hand construction, and how much that
-shortcut over-cuts as a fraction of your chamfer. See
-[docs/shaft-slot-chamfer.md](docs/shaft-slot-chamfer.md) for the derivation.
+```
+50 mm rod, 12 x 40 mm slot
+
+  edge drop     0.7307 mm   (how far the long sides sit below the top)
+  by hand       40 x 13.4614 mm, corner R6
+  wrote         chamfer_D50_W12_L40.dxf
+
+In OneCNC: import, hide the SLOT_NOMINAL layer, chain CHAMFER_PATH,
+then set your chamfer size as usual. Part Z0 on top of the rod.
+```
+
+Run it with no arguments and it asks for the three numbers. Omit the length for
+a slot that runs off the end of the rod. The chamfer size is not an input — the
+CAM applies that, and it cancels out of the compensation.
+
+`--explain` adds the full geometry, how far the by-hand rectangle over-cuts,
+and where to measure the finished part. See
+[docs/shaft-slot-chamfer.md](docs/shaft-slot-chamfer.md) for why any of it is
+needed.
 
 ### Model in Fusion
 
