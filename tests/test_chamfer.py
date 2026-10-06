@@ -7,8 +7,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "machining"))
 
-from chamfer import (ChamferTool, Shaft, Slot, build, measurement_sheet,  # noqa: E402
-                     measurement_stations, report, simple_construction, to_dxf)
+from chamfer import (ChamferTool, Shaft, Slot, build, hand_offset_at,  # noqa: E402
+                     measurement_sheet, measurement_stations, report,
+                     simple_construction, to_dxf)
 from dxf import Dxf, arc_segments, chordal_error  # noqa: E402
 
 # The case this was written for: 50 mm shaft, 12 mm slot, 40 mm long, 0.4 chamfer.
@@ -96,14 +97,30 @@ class TestSimpleConstruction(unittest.TestCase):
         self.assertAlmostEqual(s["width"], 13.4614, places=4)   # 12 + 2 x 0.7307
         self.assertAlmostEqual(s["corner_radius"], 6.0, places=9)
 
-    def test_error_is_a_quarter_of_the_edge_drop_at_sixty_degrees(self):
-        """drop_max/4 is the small-angle closed form; the module solves it
-        numerically, so the two should agree to about a percent."""
+    def test_error_peaks_near_sixty_degrees(self):
+        """Measured as the tool's closest approach to the edge, which is what
+        decides the cut. Measuring point-to-corresponding-point instead
+        overstates it by about 23%."""
         s = simple_construction(Shaft(50.0), Slot(12.0, 40.0), ChamferTool(90.0), 0.4)
-        drop_max = Shaft(50.0).drop(6.0)
-        self.assertAlmostEqual(s["max_error"], 0.18470, places=5)
-        self.assertAlmostEqual(s["max_error"] / (drop_max / 4.0), 1.0, delta=0.02)
-        self.assertAlmostEqual(s["max_error_at"], 60.0, delta=1.0)
+        self.assertAlmostEqual(s["max_error"], 0.1501, places=3)
+        self.assertAlmostEqual(s["max_error_at"], 58.0, delta=3.0)
+        self.assertLess(s["max_error"], Shaft(50.0).drop(6.0) / 4.0)
+
+    def test_hand_construction_never_undercuts(self):
+        """The reason the shop method works: an over-cut still removes the burr.
+
+        If it ever sat closer to the edge than required it would leave burr
+        behind, which is the only failure that matters for a deburr.
+        """
+        sh, sl, t = Shaft(50.0), Slot(12.0, 40.0), ChamferTool(90.0)
+        # The hand curve is sampled as a polyline, whose chords sit up to
+        # r(1-cos(step/2)) ~ 5e-5 mm inside the true arc. Anything within that
+        # is the sampling, not an undercut.
+        tol = 1e-4
+        for deg in range(0, 91, 5):
+            required = sh.drop(sl.half_width * math.cos(math.radians(deg))) * t.tan_half
+            with self.subTest(theta=deg):
+                self.assertGreaterEqual(hand_offset_at(sh, sl, t, deg) - required, -tol)
 
     def test_error_is_an_overcut_not_an_undercut(self):
         """It cuts too much, which cannot be corrected on a second pass."""
@@ -120,9 +137,10 @@ class TestSimpleConstruction(unittest.TestCase):
         self.assertLess(big.simple["error_fraction"], small.simple["error_fraction"])
         self.assertGreater(small.simple["error_fraction"], 0.5)
 
-    def test_a_large_relative_error_recommends_the_exact_path(self):
+    def test_warning_states_it_over_cuts_rather_than_leaving_burr(self):
         w = " ".join(make(leg=0.2).warnings)
-        self.assertIn("exact DXF", w)
+        self.assertIn("never under-cuts", w)
+        self.assertIn("always deburrs", w)
 
     def test_square_ends_are_worse_than_round(self):
         rnd = make(ends="round").simple["max_error"]
@@ -244,13 +262,13 @@ class TestMeasurementStations(unittest.TestCase):
     def test_routes_agree_at_the_flank_and_the_apex(self):
         rows = {r["theta"]: r for r in measurement_stations(make())}
         for th in (0.0, 90.0):
-            self.assertAlmostEqual(rows[th]["difference"], 0.0, places=9)
+            self.assertAlmostEqual(rows[th]["difference"], 0.0, places=4)
 
     def test_routes_disagree_most_at_sixty_degrees(self):
         rows = measurement_stations(make())
         worst = max(rows, key=lambda r: r["difference"])
         self.assertEqual(worst["theta"], 60.0)
-        self.assertAlmostEqual(worst["face_hand"], 0.8269, places=4)
+        self.assertAlmostEqual(worst["face_hand"], 0.7767, places=3)
         self.assertAlmostEqual(worst["face_exact"], 0.5657, places=4)
 
     def test_stations_sit_on_the_true_slot_outline(self):
@@ -270,8 +288,8 @@ class TestMeasurementStations(unittest.TestCase):
     def test_sheet_names_the_deciding_station(self):
         sheet = measurement_sheet(make())
         self.assertIn("theta=60", sheet)
-        self.assertIn("0.8269", sheet)
-        self.assertIn("1.46x wider", sheet)
+        self.assertIn("0.7767", sheet)
+        self.assertIn("1.37x wider", sheet)
 
 
 class TestChaining(unittest.TestCase):

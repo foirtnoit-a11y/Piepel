@@ -52,20 +52,38 @@ translation is **linear**. They agree exactly at both ends of the sweep
 | θ | x | needed | hand gives | error |
 |---:|---:|---:|---:|---:|
 | 0° | 6.00 | 0.7307 | 0.7307 | 0.0000 |
-| 30° | 5.20 | 0.5460 | 0.6328 | +0.0868 |
-| **60°** | **3.00** | **0.1807** | **0.3653** | **+0.1847** |
-| 80° | 1.04 | 0.0217 | 0.1269 | +0.1052 |
+| 30° | 5.20 | 0.5460 | 0.6204 | +0.0744 |
+| **58°** | **3.18** | **0.2030** | **0.3531** | **+0.1501** |
+| 80° | 1.04 | 0.0217 | 0.1083 | +0.0866 |
 | 90° | 0.00 | 0.0000 | 0.0000 | 0.0000 |
 
-The overshoot peaks at about `drop_max·tan(a)/4`, at roughly 60° into each end
-arc. It is always an **over-cut**, which matters: you cannot fix it on a second
-pass.
+Measured as the tool's **closest approach** to the edge, which is what decides
+the cut. Measuring point-to-corresponding-point instead overstates it by about
+23% and is wrong — the hand shape is not a true offset curve, so its nearest
+point to a given edge point is not the correspondingly-numbered one.
 
-Whether that is a problem depends entirely on the chamfer you are cutting.
-0.185 mm on a 1.5 mm chamfer is 12% and invisible. On a 0.4 mm deburr it is
-46%, and the chamfer is visibly half again too wide at four places on the part.
-That is why the tool reports the error as a fraction of the chamfer rather than
-just in millimetres.
+**The error is always an over-cut.** The hand shape never sits closer to the
+edge than required, anywhere. That is precisely why the shop method works: an
+over-cut still removes the burr, and only an under-cut would leave one. For
+deburring it is correct, not merely tolerable.
+
+What varies is the chamfer *width* — roughly 1.4× wider partway round each end.
+That matters only if the chamfer is cosmetic or carries a tolerance. On a pure
+deburr it is invisible in function and barely visible by eye.
+
+## The chamfer size cancels
+
+This caught me out, so it is worth stating plainly. If you select the geometry
+in CAM and type "0.2", the package computes the tool position itself. The
+offset you add to the geometry is **not** chamfer compensation — it is purely
+the Z-drop fix, and it is the same number whatever chamfer you ask for.
+
+Setting `-c` on this tool therefore does not change the path. It only scales
+the reported error against something, so you can see whether the variation
+matters at the size you cut.
+
+The one thing that must line up: **your part Z0 has to be the top of the
+shaft**, because that is where the compensation is referenced from.
 
 ## Using it
 
@@ -124,6 +142,21 @@ chains; chain each separately.
 | `round` | Cut with a W-diameter tool, semicircular ends | Exact on flanks, varies round the ends |
 | `square` | Straight ends across the shaft | The straight end becomes a curve, and the sharp corners get round joins so the contour still chains. The hand shortcut is much worse here — error reaches the full `drop_max·tan(a)`, not a quarter of it |
 | `open` | Slot runs off the end of the shaft | Two straight passes at fixed offset — exact, nothing to approximate |
+
+## A second worked example
+
+The 40 mm shaft with a 14 mm slot from the same family:
+
+```
+edge drop        1.2650 mm        (20 − √(20² − 7²))
+hand rectangle   L × 16.5300, corner R7
+worst over-cut   0.2338 mm at 56° into each end arc
+```
+
+The drop is 1.73× larger than the 50/12 case, because a proportionally wider
+slot reaches further down the curve. At a 0.2 mm chamfer the compensation is
+over six times the chamfer itself, which is the regime where it is worth
+looking at the first part carefully — the tool warns about exactly this.
 
 ## Testing it on metal
 

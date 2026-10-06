@@ -24,6 +24,11 @@ The overshoot peaks at drop_max*tan(a)/4 around 60 degrees into each end arc.
 This module reports that number, so you can decide whether it matters against
 the chamfer you are cutting, and emits the exact curve as DXF when it does.
 
+The chamfer size cancels out of all of this. Whether you position the tool
+yourself or hand the geometry to a CAM package and type "0.2", the correction
+needed is the same -- it depends only on the shaft, the slot and the tool
+angle. The offset is a fix for the Z drop, not for the chamfer.
+
 Conventions follow the rest of the repo: millimetres, and Z0 is the top of the
 shaft with material going into -Z.
 """
@@ -294,12 +299,61 @@ def build(shaft: Shaft, slot: Slot, tool: ChamferTool, leg: float,
     return path
 
 
+def _hand_path_points(shaft: Shaft, slot: Slot, tool: ChamferTool, n: int = 200):
+    """The by-hand shape: outline widened by 2*drop_max*tan(a), length and
+    corner radius unchanged. Built densely so distances to it are meaningful."""
+    hw, off = slot.half_width, shaft.drop(slot.half_width) * tool.tan_half
+    hl = slot.length / 2.0
+    if slot.end_style != "round":
+        return [(hw + off, -hl), (hw + off, hl), (-hw - off, hl), (-hw - off, -hl),
+                (hw + off, -hl)]
+    c = hl - hw
+    pts = [(hw + off, -c + 2 * c * i / n) for i in range(n + 1)]
+    for i in range(n + 1):
+        a = math.radians(90.0 * i / n)
+        pts.append((off + hw * math.cos(a), c + hw * math.sin(a)))
+    pts += [(off - 2 * off * i / n, hl) for i in range(n + 1)]
+    for i in range(n + 1):
+        a = math.radians(90.0 + 90.0 * i / n)
+        pts.append((-off + hw * math.cos(a), c + hw * math.sin(a)))
+    return pts
+
+
+def _min_distance(point, polyline) -> float:
+    """Shortest distance from a point to a polyline, segment by segment."""
+    px, py = point
+    best = float("inf")
+    for (ax, ay), (bx, by) in zip(polyline, polyline[1:]):
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        t = 0.0 if L2 == 0.0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
+        best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
+    return best
+
+
+def hand_offset_at(shaft: Shaft, slot: Slot, tool: ChamferTool, theta_deg: float) -> float:
+    """Effective offset the by-hand shape gives at this point on the true edge.
+
+    What decides the chamfer is the tool's closest approach to the edge, so this
+    is the minimum distance from the edge point to the hand-built curve -- not
+    the distance to the correspondingly-numbered point on it, which is what an
+    earlier version of this measured and got wrong by about 24%.
+    """
+    hw = slot.half_width
+    a = math.radians(theta_deg)
+    cy = slot.arc_center_y if slot.end_style == "round" else slot.length / 2.0
+    edge = (hw * math.cos(a), cy + (hw * math.sin(a) if slot.end_style == "round" else 0.0))
+    return _min_distance(edge, _hand_path_points(shaft, slot, tool))
+
+
 def simple_construction(shaft: Shaft, slot: Slot, tool: ChamferTool, leg: float) -> dict:
     """The by-hand version: widen the outline, keep the length and corner radius.
 
     Returns the four numbers you would type into OneCNC, plus the worst error
-    that construction carries and where it occurs, found numerically rather
-    than from the closed form so it stays honest for any angle or end style.
+    that construction carries. The error is always an OVER-cut -- the hand shape
+    never sits closer to the edge than it should -- which is why the method is
+    sound for deburring even where the width varies: an over-cut still removes
+    the burr, and only an under-cut would leave one.
     """
     hw = slot.half_width
     tan = tool.tan_half
@@ -307,14 +361,13 @@ def simple_construction(shaft: Shaft, slot: Slot, tool: ChamferTool, leg: float)
 
     worst, worst_at = 0.0, 0.0
     if slot.end_style == "round":
-        # The hand-built shape is the true outline translated sideways by `off`,
-        # so along an end arc its useful (normal) component is off*cos(theta)
-        # while the requirement is drop(x)*tan(a).
-        for i in range(901):
-            deg = i / 10.0
-            th = math.radians(deg)
-            x = hw * math.cos(th)
-            err = off * math.cos(th) - shaft.drop(x) * tan
+        poly = _hand_path_points(shaft, slot, tool)
+        c = slot.arc_center_y
+        for i in range(91):
+            deg = float(i)
+            a = math.radians(deg)
+            edge = (hw * math.cos(a), c + hw * math.sin(a))
+            err = _min_distance(edge, poly) - shaft.drop(edge[0]) * tan
             if err > worst:
                 worst, worst_at = err, deg
     elif slot.end_style == "square":
@@ -341,16 +394,11 @@ def _warnings(p: ChamferPath) -> list[str]:
 
     frac = p.simple.get("error_fraction", 0.0)
     if p.simple.get("max_error", 0.0) > 0:
-        if frac >= 0.25:
-            out.append(
-                f"the by-hand construction over-cuts by {p.simple['max_error']:.4f} mm, which "
-                f"is {frac * 100:.0f}% of a {p.leg:g} mm chamfer - use the exact DXF path "
-                f"instead, it costs nothing and removes this")
-        else:
-            out.append(
-                f"the by-hand construction over-cuts by {p.simple['max_error']:.4f} mm "
-                f"({frac * 100:.0f}% of the chamfer); acceptable for a deburr, worth avoiding "
-                f"if the chamfer is cosmetic")
+        out.append(
+            f"the by-hand construction over-cuts by up to {p.simple['max_error']:.4f} mm "
+            f"({frac * 100:.0f}% of a {p.leg:g} mm chamfer) around each slot end. It never "
+            f"under-cuts, so it always deburrs - use the exact path only if the chamfer "
+            f"has to look even or carries a tolerance")
 
     if slot.width > 0.7 * shaft.diameter:
         out.append(
@@ -410,7 +458,7 @@ def measurement_stations(path: "ChamferPath", thetas=(0.0, 30.0, 60.0, 80.0, 90.
         drop = sh.drop(x)
         # leg = offset - (z_apex + drop) * tan(a), per the compensation identity
         leg_exact = sh.drop(x) * tan_a - (path.z_apex + drop) * tan_a
-        leg_hand = path.offset_at_flank * math.cos(a) - (path.z_apex + drop) * tan_a
+        leg_hand = (hand_offset_at(sh, sl, t, th) - (path.z_apex + drop) * tan_a)
         rows.append({
             "theta": th,
             "x": x,
@@ -512,7 +560,11 @@ def report(path: ChamferPath) -> str:
         f"  edge drop        {path.drop_max:.4f} mm below the top of the shaft",
         f"                   sqrt({s.radius:g}^2 - {sl.half_width:g}^2) = "
         f"{math.sqrt(s.radius ** 2 - sl.half_width ** 2):.4f}",
-        f"  program Z        {path.z_apex:.4f}  (virtual cone point, Z0 = shaft top)",
+        f"  part Z0          top of the shaft -- the compensation is referenced to it",
+        f"  tool Z           {path.z_apex:.4f} for the virtual cone point, if you drive it",
+        f"                   yourself. If the CAM applies its own chamfer offset (select",
+        f"                   the geometry, type the chamfer size), it derives this and the",
+        f"                   chamfer size cancels out of the compensation entirely.",
     ]
     if t.tip_diameter > 0:
         L.append(f"  or Z             {path.z_flat:.4f}  if the offset is set on the "
