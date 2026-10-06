@@ -125,6 +125,56 @@ chains; chain each separately.
 | `square` | Straight ends across the shaft | The straight end becomes a curve, and the sharp corners get round joins so the contour still chains. The hand shortcut is much worse here — error reaches the full `drop_max·tan(a)`, not a quarter of it |
 | `open` | Slot runs off the end of the shaft | Two straight passes at fixed offset — exact, nothing to approximate |
 
+## Testing it on metal
+
+The claim this tool makes is specific and checkable: the exact path holds one
+chamfer width all the way round, and the hand construction widens by about half
+again at one predictable place. `--measure` prints the stations to check.
+
+```bash
+python3 chamfer.py -D 50 -w 12 -l 40 -c 0.4 --measure
+```
+
+```
+  theta      X        Y     surface    exact    by hand    diff
+     0     6.000   14.000   -0.7307   0.5657    0.5657  +0.0000
+    30     5.196   17.000   -0.5460   0.5657    0.6885  +0.1228
+    60     3.000   19.196   -0.1807   0.5657    0.8269  +0.2612
+    80     1.042   19.909   -0.0217   0.5657    0.7144  +0.1487
+    90     0.000   20.000   -0.0000   0.5657    0.5657  +0.0000
+```
+
+X is from the slot centreline, Y from the slot centre, and the figure is the
+chamfer **face** width — the dimension you can see on a comparator, related to
+the radial leg by `face = leg / sin(a)`.
+
+**Before cutting**, in OneCNC: import, switch `SLOT_NOMINAL` off, and confirm
+the path chains as one closed contour. If it will not chain, the DXF is wrong
+and nothing downstream matters. Then check the extents read ±6.731 in X and
+±20.000 in Y for this example, and backplot.
+
+**The decisive test** is an A/B on one piece of scrap: cut two identical slots,
+chamfer one with the hand rectangle and one from the DXF, then measure both at
+**θ = 60° (X3.000, Y19.196)**. The prediction is 0.827 against 0.566 — a 1.46×
+difference, which is visible under a loupe and unambiguous on a comparator.
+Same tool, same Z, same material, one variable.
+
+Cheap substitutes if there is no comparator: a drop of layout dye on the edge
+before the pass shows the witness band directly, and a photo of the slot end
+next to a rule will show a visibly fatter chamfer partway round the corner if
+the hand path is in use.
+
+If the measured numbers do not match the table, the discrepancy is diagnostic
+rather than just disappointing:
+
+| What you measure | What it means |
+|---|---|
+| Uniformly too wide or narrow, everywhere | Z is off, or the tool offset is set on the flat rather than the virtual point (see `--tip-diameter`) |
+| Correct on the flanks, wide partway round the ends | The hand construction is still in use — the DXF did not get chained, or `SLOT_NOMINAL` was selected |
+| Correct at the ends, wrong on the flanks | The edge drop is wrong, so the shaft is not the diameter you entered — measure it |
+| Wide on one side of the slot only | The slot is not centred on the shaft; the compensation assumes it is |
+| Varies along a straight flank | Shaft deflection or runout in the setup, not geometry — nothing in the path can fix that |
+
 ## Limits
 
 - **Lengthwise slots only.** A slot running *across* the shaft has both edge

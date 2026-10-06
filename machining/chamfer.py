@@ -385,6 +385,78 @@ def _warnings(p: ChamferPath) -> list[str]:
     return out
 
 
+def measurement_stations(path: "ChamferPath", thetas=(0.0, 30.0, 60.0, 80.0, 90.0)) -> list[dict]:
+    """Where to measure the finished part, and what each route predicts there.
+
+    Gives the chamfer face width -- the dimension you can actually see on a
+    comparator or under a loupe -- at named stations on one end of the slot,
+    for both the exact path and the by-hand construction. The two disagree most
+    around theta = 60 deg, so that station is the one that decides which path
+    you are looking at.
+
+    Face width relates to the radial leg by  face = leg / sin(a).
+    """
+    sh, sl, t = path.shaft, path.slot, path.tool
+    hw = sl.half_width
+    sin_a = math.sin(t.half_angle)
+    tan_a = t.tan_half
+    cy = sl.arc_center_y if sl.end_style == "round" else sl.length / 2.0
+
+    rows = []
+    for th in thetas:
+        a = math.radians(th)
+        x = hw * math.cos(a)
+        y = cy + (hw * math.sin(a) if sl.end_style == "round" else 0.0)
+        drop = sh.drop(x)
+        # leg = offset - (z_apex + drop) * tan(a), per the compensation identity
+        leg_exact = sh.drop(x) * tan_a - (path.z_apex + drop) * tan_a
+        leg_hand = path.offset_at_flank * math.cos(a) - (path.z_apex + drop) * tan_a
+        rows.append({
+            "theta": th,
+            "x": x,
+            "y": y,
+            "surface_drop": drop,
+            "face_exact": leg_exact / sin_a,
+            "face_hand": leg_hand / sin_a,
+            "difference": (leg_hand - leg_exact) / sin_a,
+        })
+    return rows
+
+
+def measurement_sheet(path: "ChamferPath") -> str:
+    """Printable table for taking to the comparator."""
+    rows = measurement_stations(path)
+    sl = path.slot
+    L = [
+        f"MEASUREMENT STATIONS -- one end of the slot, chamfer FACE width in mm",
+        f"(X from the slot centreline, Y from the slot centre; mirror for the other end)",
+        "",
+        "  theta      X        Y     surface    exact    by hand    diff",
+        "  -----  -------  -------  ---------  -------  ---------  -------",
+    ]
+    for r in rows:
+        L.append(f"  {r['theta']:4.0f}   {r['x']:7.3f}  {r['y']:7.3f}  "
+                 f"{-r['surface_drop']:8.4f}   {r['face_exact']:6.4f}   "
+                 f"{r['face_hand']:7.4f}  {r['difference']:+7.4f}")
+    worst = max(rows, key=lambda r: r["difference"])
+    L += [
+        "",
+        f"  The two routes differ most at theta={worst['theta']:.0f} deg "
+        f"(X{worst['x']:.3f} Y{worst['y']:.3f}):",
+        f"    exact path   -> {worst['face_exact']:.4f} mm face",
+        f"    by hand      -> {worst['face_hand']:.4f} mm face  "
+        f"({worst['face_hand'] / worst['face_exact']:.2f}x wider)",
+        "",
+        "  Measure there. If the exact path is working, the chamfer is the same",
+        "  width at every station; if it is not, the number you read tells me",
+        "  which way the compensation is off and by how much.",
+    ]
+    if sl.end_style != "round":
+        L.append("")
+        L.append(f"  (stations computed for {sl.end_style} ends)")
+    return "\n".join(L)
+
+
 # --------------------------------------------------------------------------
 # output
 # --------------------------------------------------------------------------
@@ -500,6 +572,8 @@ def _main(argv=None) -> int:
     ap.add_argument("--slot-depth", type=float, help="only used for sanity checks")
     ap.add_argument("--tol", type=float, default=0.005, help="chordal tolerance, mm")
     ap.add_argument("--dxf", help="write the path to this DXF file")
+    ap.add_argument("--measure", action="store_true",
+                    help="print a table of stations to check on the finished part")
     a = ap.parse_args(argv)
 
     path = build(
@@ -511,6 +585,9 @@ def _main(argv=None) -> int:
     )
     print()
     print(report(path))
+    if a.measure:
+        print()
+        print(measurement_sheet(path))
     if a.dxf:
         d = to_dxf(path)
         d.write(a.dxf)

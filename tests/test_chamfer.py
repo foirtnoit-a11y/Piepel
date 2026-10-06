@@ -7,8 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "machining"))
 
-from chamfer import (ChamferTool, Shaft, Slot, build, report,  # noqa: E402
-                     simple_construction, to_dxf)
+from chamfer import (ChamferTool, Shaft, Slot, build, measurement_sheet,  # noqa: E402
+                     measurement_stations, report, simple_construction, to_dxf)
 from dxf import Dxf, arc_segments, chordal_error  # noqa: E402
 
 # The case this was written for: 50 mm shaft, 12 mm slot, 40 mm long, 0.4 chamfer.
@@ -221,6 +221,57 @@ class TestReportAndDxf(unittest.TestCase):
     def test_dxf_rejects_unknown_units(self):
         with self.assertRaises(ValueError):
             Dxf("furlongs")
+
+
+class TestMeasurementStations(unittest.TestCase):
+    """The table you take to the comparator. It has to be falsifiable."""
+
+    def test_exact_path_predicts_one_width_everywhere(self):
+        rows = measurement_stations(make())
+        widths = {round(r["face_exact"], 9) for r in rows}
+        self.assertEqual(len(widths), 1)
+        self.assertAlmostEqual(rows[0]["face_exact"], 0.4 * math.sqrt(2), places=9)
+
+    def test_face_width_is_the_leg_over_sin_of_the_flank_angle(self):
+        for angle in (60.0, 90.0, 120.0):
+            p = make(angle=angle)
+            expected = p.leg / math.sin(p.tool.half_angle)
+            with self.subTest(angle=angle):
+                self.assertAlmostEqual(measurement_stations(p)[0]["face_exact"],
+                                       expected, places=9)
+                self.assertAlmostEqual(p.face_width, expected, places=9)
+
+    def test_routes_agree_at_the_flank_and_the_apex(self):
+        rows = {r["theta"]: r for r in measurement_stations(make())}
+        for th in (0.0, 90.0):
+            self.assertAlmostEqual(rows[th]["difference"], 0.0, places=9)
+
+    def test_routes_disagree_most_at_sixty_degrees(self):
+        rows = measurement_stations(make())
+        worst = max(rows, key=lambda r: r["difference"])
+        self.assertEqual(worst["theta"], 60.0)
+        self.assertAlmostEqual(worst["face_hand"], 0.8269, places=4)
+        self.assertAlmostEqual(worst["face_exact"], 0.5657, places=4)
+
+    def test_stations_sit_on_the_true_slot_outline(self):
+        """The operator measures the real edge, not the offset path."""
+        p = make()
+        for r in measurement_stations(p):
+            with self.subTest(theta=r["theta"]):
+                # distance from the end-arc centre must be the slot half width
+                d = math.hypot(r["x"], r["y"] - p.slot.arc_center_y)
+                self.assertAlmostEqual(d, p.slot.half_width, places=9)
+
+    def test_surface_drop_is_reported_as_a_negative_z(self):
+        rows = measurement_stations(make())
+        self.assertAlmostEqual(rows[0]["surface_drop"], 0.7307, places=4)
+        self.assertAlmostEqual(rows[-1]["surface_drop"], 0.0, places=9)
+
+    def test_sheet_names_the_deciding_station(self):
+        sheet = measurement_sheet(make())
+        self.assertIn("theta=60", sheet)
+        self.assertIn("0.8269", sheet)
+        self.assertIn("1.46x wider", sheet)
 
 
 class TestChaining(unittest.TestCase):
